@@ -86,7 +86,7 @@ Here's an example of what you can do when it's connected to Claude.
 
 ### Windows Compatibility
 
-If you're running this project on Windows, be aware that `go-sqlite3` requires **CGO to be enabled** in order to compile and work properly. By default, **CGO is disabled on Windows**, so you need to explicitly enable it and have a C compiler installed.
+If you're running this project on Windows, be aware that `go-sqlite` requires **CGO to be enabled** in order to compile and work properly. By default, **CGO is disabled on Windows**, so you need to explicitly enable it and have a C compiler installed.
 
 #### Steps to get it working:
 
@@ -104,7 +104,7 @@ If you're running this project on Windows, be aware that `go-sqlite3` requires *
 
 Without this setup, you'll likely run into errors like:
 
-> `Binary was compiled with 'CGO_ENABLED=0', go-sqlite3 requires cgo to work.`
+> `Binary was compiled with 'CGO_ENABLED=0', go-sqlite requires cgo to work.`
 
 ## Architecture Overview
 
@@ -181,3 +181,6 @@ By default, just the metadata of the media is stored in the local database. The 
 - **WhatsApp Out of Sync**: If your WhatsApp messages get out of sync with the bridge, delete both database files (`whatsapp-bridge/store/messages.db` and `whatsapp-bridge/store/whatsapp.db`) and restart the bridge to re-authenticate.
 
 For additional Claude Desktop integration troubleshooting, see the [MCP documentation](https://modelcontextprotocol.io/quickstart/server#claude-for-desktop-integration-issues). The documentation includes helpful tips for checking logs and resolving common issues.
+
+
+location = C:\Users\sp\.config\opencode\opencode.json
