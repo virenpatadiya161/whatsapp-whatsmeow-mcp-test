@@ -103,6 +103,13 @@ func NewMessageStore() (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to migrate messages table: %v", err)
 	}
 
+	// Migration: add phone_number column if it doesn't already exist
+	_, err = db.Exec(`ALTER TABLE messages ADD COLUMN phone_number TEXT`)
+	if err != nil && !strings.Contains(err.Error(), "duplicate column name") {
+		db.Close()
+		return nil, fmt.Errorf("failed to migrate messages table (phone_number): %v", err)
+	}
+
 	return &MessageStore{db: db}, nil
 }
 
@@ -122,7 +129,7 @@ func (store *MessageStore) StoreChat(jid, name string, lastMessageTime time.Time
 
 // Store a message in the database
 func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, timestamp time.Time, isFromMe bool,
-	mediaType, filename, url, directPath string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64) error {
+	mediaType, filename, url, directPath string, mediaKey, fileSHA256, fileEncSHA256 []byte, fileLength uint64, phoneNumber string) error {
 	// Only store if there's actual content or media
 	if content == "" && mediaType == "" {
 		return nil
@@ -130,9 +137,9 @@ func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, tim
 
 	_, err := store.db.Exec(
 		`INSERT OR REPLACE INTO messages 
-		(id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, direct_path, media_key, file_sha256, file_enc_sha256, file_length) 
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength,
+         (id, chat_jid, sender, content, timestamp, is_from_me, media_type, filename, url, direct_path, media_key, file_sha256, file_enc_sha256, file_length, phone_number) 
+     	 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, chatJID, sender, content, timestamp, isFromMe, mediaType, filename, url, directPath, mediaKey, fileSHA256, fileEncSHA256, fileLength, phoneNumber,
 	)
 	return err
 }
@@ -609,6 +616,7 @@ func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *ev
 		fileSHA256,
 		fileEncSHA256,
 		fileLength,
+		senderNumber,
 	)
 
 	if err != nil {
@@ -1279,6 +1287,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					fileSHA256,
 					fileEncSHA256,
 					fileLength,
+					sender,
 				)
 				if err != nil {
 					logger.Warnf("Failed to store history message: %v", err)
