@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Media</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            padding: 20px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th,
+        td {
+            text-align: left;
+            padding: 8px;
+            border-bottom: 1px solid #ddd;
+        }
+
+        button {
+            padding: 4px 12px;
+            margin-right: 6px;
+            cursor: pointer;
+        }
+
+        .approve {
+            background: #d4edda;
+            border: 1px solid #28a745;
+        }
+
+        .reject {
+            background: #f8d7da;
+            border: 1px solid #dc3545;
+        }
+    </style>
+</head>
+
+<body>
+    <h2>Media</h2>
+    <p><a href="/approved.html">View Approved →</a></p>
+    <table id="tbl">
+        <thead>
+            <tr>
+                <th>File Name</th>
+                <th>Mobile</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody></tbody>
+    </table>
+
+    <script>
+        async function load() {
+            const res = await fetch('/api/pending');
+            const rows = await res.json();
+            const tbody = document.querySelector('#tbl tbody');
+            tbody.innerHTML = '';
+            rows.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+          <td>${row.filename}</td>
+          <td>${row.phone_number}</td>
+          <td>
+            <button class="approve" onclick="act('${row.id}','approve')">Approve</button>
+            <button class="reject" onclick="act('${row.id}','reject')">Reject</button>
+          </td>`;
+                tbody.appendChild(tr);
+            });
+        }
+        async function act(id, action) {
+            await fetch(`/api/${action}/${id}`, { method: 'POST' });
+            load();
+        }
+        load();
+    </script>
+</body>
+
+</html>

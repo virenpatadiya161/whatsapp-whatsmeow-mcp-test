@@ -1,0 +1,71 @@
+import { serve } from '@hono/node-server';
+import { serveStatic } from '@hono/node-server/serve-static';
+import { Hono } from 'hono';
+import { DatabaseSync } from 'node:sqlite';
+import fs from 'fs';
+
+const MESSAGES_DB_PATH = '../whatsapp-bridge/store/messages.db';
+const STATUS_FILE = './status.json';
+
+// Open messages.db READ-ONLY — never write to the bridge's own database
+const db = new DatabaseSync(MESSAGES_DB_PATH, { readOnly: true });
+
+// Load or create the local status tracker (approved/rejected message IDs)
+function loadStatus() {
+    if (!fs.existsSync(STATUS_FILE)) return {};
+    return JSON.parse(fs.readFileSync(STATUS_FILE, 'utf-8'));
+}
+function saveStatus(status) {
+    fs.writeFileSync(STATUS_FILE, JSON.stringify(status, null, 2));
+}
+
+const app = new Hono();
+
+function getMediaMessages() {
+    return db.prepare(`
+    SELECT id, chat_jid, phone_number, filename, media_type, timestamp
+    FROM messages
+    WHERE media_type IN ('image', 'document')
+      AND filename != ''
+      AND is_from_me = 0
+    ORDER BY timestamp DESC
+  `).all();
+}
+
+app.get('/api/pending', (c) => {
+    const status = loadStatus();
+    const all = getMediaMessages();
+    const pending = all.filter(m => !status[m.id]);
+    return c.json(pending);
+});
+
+app.get('/api/approved', (c) => {
+    const status = loadStatus();
+    const all = getMediaMessages();
+    const approved = all
+        .filter(m => status[m.id] === 'approved')
+        .slice(0, 100); // last 100 only
+    return c.json(approved);
+});
+
+app.post('/api/approve/:id', (c) => {
+    const id = c.req.param('id');
+    const status = loadStatus();
+    status[id] = 'approved';
+    saveStatus(status);
+    return c.json({ ok: true });
+});
+
+app.post('/api/reject/:id', (c) => {
+    const id = c.req.param('id');
+    const status = loadStatus();
+    status[id] = 'rejected';
+    saveStatus(status);
+    return c.json({ ok: true });
+});
+
+app.use('/*', serveStatic({ root: './public' }));
+
+serve({ fetch: app.fetch, port: 4000 }, (info) => {
+    console.log(`Dashboard running at http://localhost:${info.port}`);
+});
