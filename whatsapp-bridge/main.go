@@ -465,6 +465,59 @@ func resolveSenderPhoneNumber(client *whatsmeow.Client, msg *events.Message, log
 	return msg.Info.Chat.User // all lookups failed, falling back to raw Chat.User
 }
 
+// resolvePhoneNumberFromJIDString does the same LID -> phone number resolution as
+// resolveSenderPhoneNumber, but works from a raw JID string (what history sync gives us)
+// instead of an events.Message.
+func resolvePhoneNumberFromJIDString(client *whatsmeow.Client, rawJID string, chatJID types.JID, logger waLog.Logger) string {
+	if rawJID == "" {
+		return ""
+	}
+
+	jid, err := types.ParseJID(rawJID)
+	if err != nil {
+		return rawJID // not a parseable JID, return as-is
+	}
+
+	if number := phoneNumberFromJID(jid); number != "" {
+		return number
+	}
+
+	if client != nil && client.Store != nil && client.Store.LIDs != nil && jid.Server == types.HiddenUserServer {
+		pn, err := client.Store.LIDs.GetPNForLID(context.Background(), jid.ToNonAD())
+		if err == nil {
+			if number := phoneNumberFromJID(pn); number != "" {
+				return number
+			}
+		} else {
+			logger.Warnf("[resolvePhoneNumberFromJIDString] LID store lookup failed for %s: %v", jid, err)
+		}
+	}
+
+	if client != nil && chatJID.Server == types.GroupServer && jid.Server == types.HiddenUserServer {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		groupInfo, err := client.GetGroupInfo(ctx, chatJID)
+		if err == nil {
+			for _, participant := range groupInfo.Participants {
+				if participant.LID.ToNonAD() != jid.ToNonAD() {
+					continue
+				}
+				if number := phoneNumberFromJID(participant.PhoneNumber); number != "" {
+					return number
+				}
+				if number := phoneNumberFromJID(participant.JID); number != "" {
+					return number
+				}
+			}
+		} else {
+			logger.Warnf("[resolvePhoneNumberFromJIDString] GetGroupInfo failed for %s: %v", chatJID, err)
+		}
+	}
+
+	return jid.User // all lookups failed, fall back to raw (likely still a LID digit string)
+}
+
 func normalizePhoneNumber(value string) string {
 	var digits strings.Builder
 	for _, r := range value {
@@ -1258,6 +1311,13 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					sender = jid.User
 				}
 
+				senderNumber := sender
+				if isFromMe && client.Store.ID != nil {
+					senderNumber = client.Store.ID.User
+				} else if !isFromMe {
+					senderNumber = resolvePhoneNumberFromJIDString(client, sender, jid, logger)
+				}
+
 				// Store message
 				msgID := ""
 				if msg.Message.Key != nil && msg.Message.Key.ID != nil {
@@ -1287,7 +1347,7 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 					fileSHA256,
 					fileEncSHA256,
 					fileLength,
-					sender,
+					senderNumber,
 				)
 				if err != nil {
 					logger.Warnf("Failed to store history message: %v", err)
