@@ -335,10 +335,14 @@
                 groups.get(key).push(row);
             });
 
+            // rows arrives sorted timestamp DESC, so items[0] in each group is that
+            // group's newest message — sort groups by that so fresh numbers rise to top
+            const latestTs = items => new Date(items[0].timestamp).getTime();
+
             const ordered = [...groups.entries()].sort((a, b) => {
                 if (a[0] === '__unlinked__') return 1;
                 if (b[0] === '__unlinked__') return -1;
-                return b[1].length - a[1].length;
+                return latestTs(b[1]) - latestTs(a[1]);
             });
 
             ordered.forEach(([key, items]) => {
@@ -384,7 +388,7 @@
         setInterval(checkWaStatus, 10000);
 
         async function act(id, action) {
-            await fetch(`/api/${action}/${id}`, { method: 'POST' });
+            await fetch(`/api/${action}?id=${encodeURIComponent(id)}`, { method: 'POST' });
             load();
         }
 

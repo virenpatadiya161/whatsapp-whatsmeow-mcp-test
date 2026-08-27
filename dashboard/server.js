@@ -32,6 +32,13 @@ function getMediaMessages() {
   `).all();
 }
 
+function markStatus(id, value) {
+    const status = loadStatus();
+    delete status[id]; // in case it's being re-approved/re-rejected, drop the old position
+    const updated = { [id]: value, ...status };
+    saveStatus(updated);
+}
+
 app.get('/api/all-media', (c) => {
     const status = loadStatus();
     const all = getMediaMessages();
@@ -48,19 +55,17 @@ app.get('/api/approved', (c) => {
     return c.json(approved);
 });
 
-app.post('/api/approve/:id', (c) => {
-    const id = c.req.param('id');
-    const status = loadStatus();
-    status[id] = 'approved';
-    saveStatus(status);
+app.post('/api/approve', (c) => {
+    const id = c.req.query('id');
+    if (!id) return c.json({ ok: false, error: 'id query param is required' }, 400);
+    markStatus(id, 'approved');
     return c.json({ ok: true });
 });
 
-app.post('/api/reject/:id', (c) => {
-    const id = c.req.param('id');
-    const status = loadStatus();
-    status[id] = 'rejected';
-    saveStatus(status);
+app.post('/api/reject', (c) => {
+    const id = c.req.query('id');
+    if (!id) return c.json({ ok: false, error: 'id query param is required' }, 400);
+    markStatus(id, 'rejected');
     return c.json({ ok: true });
 });
 

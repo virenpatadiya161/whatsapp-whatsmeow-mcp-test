@@ -255,7 +255,7 @@
             container.innerHTML = '';
 
             if (!rows.length) {
-                container.innerHTML = '<div class="empty">No approved media yet.</div>';
+                container.innerHTML = '<div class="empty">Queue is empty — nothing waiting on review.</div>';
                 return;
             }
 
@@ -266,10 +266,14 @@
                 groups.get(key).push(row);
             });
 
+            // rows arrives sorted timestamp DESC, so items[0] in each group is that
+            // group's newest message — sort groups by that so fresh numbers rise to top
+            const latestTs = items => new Date(items[0].timestamp).getTime();
+
             const ordered = [...groups.entries()].sort((a, b) => {
                 if (a[0] === '__unlinked__') return 1;
                 if (b[0] === '__unlinked__') return -1;
-                return b[1].length - a[1].length;
+                return latestTs(b[1]) - latestTs(a[1]);
             });
 
             ordered.forEach(([key, items]) => {
@@ -278,8 +282,10 @@
                 group.className = 'group' + (isUnlinked ? ' unlinked' : '');
                 group.innerHTML = `
                     <div class="group-head">
+                        <div class="group-number">
                         <span class="num">${isUnlinked ? 'No number linked' : key}</span>
-                        <span class="badge">${items.length}</span>
+                    </div>
+                    <span class="badge">${items.length}</span>
                     </div>
                     ${items.map(row => `
                         <div class="row">
