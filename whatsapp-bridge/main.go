@@ -860,7 +860,19 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 	var err error
 
 	// First, check if we already have this file
-	chatDir := fmt.Sprintf("store/%s", strings.ReplaceAll(chatJID, ":", "_"))
+	// Prefer the sender's phone number as the folder name; fall back to chat_jid
+	// (e.g. for rows stored before the phone_number column existed).
+	var folderPhoneNumber string
+	_ = messageStore.db.QueryRow(
+		"SELECT phone_number FROM messages WHERE id = ? AND chat_jid = ?",
+		messageID, chatJID,
+	).Scan(&folderPhoneNumber)
+
+	folderName := folderPhoneNumber
+	if folderName == "" {
+		folderName = strings.ReplaceAll(chatJID, ":", "_")
+	}
+	chatDir := fmt.Sprintf("store/%s", folderName)
 	localPath := ""
 
 	// Get media info from the database
