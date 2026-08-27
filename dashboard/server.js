@@ -32,7 +32,7 @@ function getMediaMessages() {
   `).all();
 }
 
-app.get('/api/pending', (c) => {
+app.get('/api/all-media', (c) => {
     const status = loadStatus();
     const all = getMediaMessages();
     const pending = all.filter(m => !status[m.id]);
@@ -64,15 +64,15 @@ app.post('/api/reject/:id', (c) => {
     return c.json({ ok: true });
 });
 
-app.get('/api/wa-status', async (c) => {
+app.get('/api/status', async (c) => {
     try { return c.json(await (await fetch('http://localhost:8080/api/status')).json()); }
     catch { return c.json({ connected: false }); }
 });
-app.get('/api/wa-qr', async (c) => {
+app.get('/api/qr', async (c) => {
     try { return c.json(await (await fetch('http://localhost:8080/api/qr')).json()); }
     catch { return c.json({ qr: '' }); }
 });
-app.post('/api/wa-login', async (c) => {
+app.post('/api/login', async (c) => {
     try { await fetch('http://localhost:8080/api/login', { method: 'POST' }); } catch { }
     return c.json({ ok: true });
 });

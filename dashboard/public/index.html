@@ -306,7 +306,7 @@
 
     <script>
         async function load() {
-            const res = await fetch('/api/pending');
+            const res = await fetch('/api/all-media');
             const rows = await res.json();
             renderStats(rows);
             renderGroups(rows);
@@ -366,21 +366,21 @@
         }
 
         async function checkWaStatus() {
-            const d = await (await fetch('/api/wa-status')).json();
+            const d = await (await fetch('/api/status')).json();
             document.getElementById('wa-banner').style.display = d.connected ? 'none' : 'block';
         }
         async function startLogin() {
-            await fetch('/api/wa-login', { method: 'POST' });
+            await fetch('/api/login', { method: 'POST' });
             const box = document.getElementById('wa-qr');
             const iv = setInterval(async () => {
-                const s = await (await fetch('/api/wa-status')).json();
+                const s = await (await fetch('/api/status')).json();
                 if (s.connected) { clearInterval(iv); box.innerHTML = ''; checkWaStatus(); return; }
-                const q = await (await fetch('/api/wa-qr')).json();
+                const q = await (await fetch('/api/qr')).json();
                 if (q.qr) box.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(q.qr)}">`;
             }, 3000);
         }
         checkWaStatus();
-        setInterval(checkWaStatus, 8000);
+        setInterval(checkWaStatus, 10000);
 
         async function act(id, action) {
             await fetch(`/api/${action}/${id}`, { method: 'POST' });
