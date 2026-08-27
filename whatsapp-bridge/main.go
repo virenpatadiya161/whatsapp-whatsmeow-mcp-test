@@ -37,9 +37,10 @@ const registrationFormURL = "https://docs.google.com/forms/d/e/1FAIpQLScMmHtR0G6
 const registrationSheetCSVURL = "https://docs.google.com/spreadsheets/d/1nzfQvGLL65eGI--kMbfYtoQ9Pu1ulSdyhGRmx7UA8iw/export?format=csv&gid=585141890"
 
 var (
-	loginMu      sync.Mutex
-	latestQRCode string
-	waConnected  bool
+	loginMu       sync.Mutex
+	latestQRCode  string
+	waConnected   bool
+	deviceInvalid bool
 )
 
 var loggingIn bool
@@ -963,7 +964,7 @@ func downloadMedia(client *whatsmeow.Client, messageStore *MessageStore, message
 }
 
 // Start a REST API server to expose the WhatsApp client functionality
-func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port int, logger waLog.Logger) {
+func startRESTServer(box *ClientBox, container *sqlstore.Container, registerHandlers func(*whatsmeow.Client), messageStore *MessageStore, port int, logger waLog.Logger) {
 	// Handler for sending messages
 	http.HandleFunc("/api/send", func(w http.ResponseWriter, r *http.Request) {
 		// Only allow POST requests
@@ -993,7 +994,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		fmt.Println("Received request to send message", req.Message, req.MediaPath)
 
 		// Send the message
-		success, message := sendWhatsAppMessage(client, req.Recipient, req.Message, req.MediaPath)
+		success, message := sendWhatsAppMessage(box.Get(), req.Recipient, req.Message, req.MediaPath)
 		fmt.Println("Message sent", success, message)
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
@@ -1032,7 +1033,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 		}
 
 		// Download the media
-		success, mediaType, filename, path, err := downloadMedia(client, messageStore, req.MessageID, req.ChatJID)
+		success, mediaType, filename, path, err := downloadMedia(box.Get(), messageStore, req.MessageID, req.ChatJID)
 
 		// Set response headers
 		w.Header().Set("Content-Type", "application/json")
@@ -1063,7 +1064,7 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 
 	http.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
 		loginMu.Lock()
-		connected := waConnected && client.IsConnected()
+		connected := waConnected && box.Get().IsConnected()
 		loginMu.Unlock()
 		json.NewEncoder(w).Encode(map[string]bool{"connected": connected})
 	})
@@ -1076,11 +1077,47 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 	})
 
 	http.HandleFunc("/api/login", func(w http.ResponseWriter, r *http.Request) {
-		if client.IsConnected() && client.Store.ID != nil {
+		cur := box.Get()
+
+		loginMu.Lock()
+		invalid := deviceInvalid
+		loginMu.Unlock()
+
+		if cur.IsConnected() && cur.Store.ID != nil && !invalid {
 			json.NewEncoder(w).Encode(map[string]string{"message": "already connected"})
 			return
 		}
-		go startQRLogin(client, logger)
+
+		if cur.Store.ID != nil || invalid {
+			// Either a stale-but-still-paired session, or one whatsmeow already
+			// tore down internally (device removed from the phone — this also
+			// resets Store.ID to nil, so ID==nil alone doesn't mean "safe to
+			// reuse"). Either way this client object is done; build a fresh one.
+			if cur.IsConnected() {
+				cur.Disconnect()
+			}
+			if cur.Store.ID != nil {
+				if err := cur.Store.Delete(context.Background()); err != nil {
+					logger.Warnf("[api/login] failed to delete stale device: %v", err)
+				}
+			}
+
+			newClient, err := newWAClient(container, logger)
+			if err != nil {
+				logger.Errorf("[api/login] failed to create new client: %v", err)
+				http.Error(w, "failed to start login", http.StatusInternalServerError)
+				return
+			}
+			registerHandlers(newClient)
+			box.Set(newClient)
+			cur = newClient
+
+			loginMu.Lock()
+			deviceInvalid = false
+			loginMu.Unlock()
+		}
+
+		go startQRLogin(cur, logger)
 		json.NewEncoder(w).Encode(map[string]string{"message": "login started"})
 	})
 
@@ -1094,6 +1131,49 @@ func startRESTServer(client *whatsmeow.Client, messageStore *MessageStore, port 
 			fmt.Printf("REST API server error: %v\n", err)
 		}
 	}()
+}
+
+// ClientBox holds the active whatsmeow client behind a lock so it can be
+// swapped out at runtime — needed because a whatsmeow.Client whose Store has
+// been deleted is permanently unusable ("invalid use of deleted device"), so
+// relogin after a stale/logged-out session must build a fresh client rather
+// than reuse the old one.
+type ClientBox struct {
+	mu     sync.RWMutex
+	client *whatsmeow.Client
+}
+
+func (b *ClientBox) Get() *whatsmeow.Client {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.client
+}
+
+func (b *ClientBox) Set(c *whatsmeow.Client) {
+	b.mu.Lock()
+	b.client = c
+	b.mu.Unlock()
+}
+
+// newWAClient creates a fresh whatsmeow client backed by either the existing
+// stored device or a brand new one. Used both at startup and whenever a
+// relogin needs to replace a client whose device was deleted.
+func newWAClient(container *sqlstore.Container, logger waLog.Logger) (*whatsmeow.Client, error) {
+	deviceStore, err := container.GetFirstDevice(context.Background())
+	if err != nil {
+		if err == sql.ErrNoRows {
+			deviceStore = container.NewDevice()
+			logger.Infof("Created new device")
+		} else {
+			return nil, fmt.Errorf("failed to get device: %v", err)
+		}
+	}
+
+	client := whatsmeow.NewClient(deviceStore, logger)
+	if client == nil {
+		return nil, fmt.Errorf("failed to create WhatsApp client")
+	}
+	return client, nil
 }
 
 func main() {
@@ -1116,25 +1196,15 @@ func main() {
 		return
 	}
 
-	// Get device store - This contains session information
-	deviceStore, err := container.GetFirstDevice(context.Background())
-	if err != nil {
-		if err == sql.ErrNoRows {
-			// No device exists, create one
-			deviceStore = container.NewDevice()
-			logger.Infof("Created new device")
-		} else {
-			logger.Errorf("Failed to get device: %v", err)
-			return
-		}
-	}
-
 	// Create client instance
-	client := whatsmeow.NewClient(deviceStore, logger)
-	if client == nil {
-		logger.Errorf("Failed to create WhatsApp client")
+	client, err := newWAClient(container, logger)
+	if err != nil {
+		logger.Errorf("%v", err)
 		return
 	}
+
+	box := &ClientBox{}
+	box.Set(client)
 
 	// Initialize message store
 	messageStore, err := NewMessageStore()
@@ -1144,30 +1214,36 @@ func main() {
 	}
 	defer messageStore.Close()
 
-	// Setup event handling for messages and history sync
-	client.AddEventHandler(func(evt interface{}) {
-		switch v := evt.(type) {
-		case *events.Message:
-			// Process regular messages
-			handleMessage(client, messageStore, v, logger)
+	// Setup event handling for messages and history sync. Always look up the
+	// *current* client via box.Get() rather than closing over the client
+	// variable directly, since relogin may swap it out.
+	registerHandlers := func(c *whatsmeow.Client) {
+		c.AddEventHandler(func(evt interface{}) {
+			switch v := evt.(type) {
+			case *events.Message:
+				// Process regular messages
+				handleMessage(box.Get(), messageStore, v, logger)
 
-		case *events.HistorySync:
-			// Process history sync events
-			handleHistorySync(client, messageStore, v, logger)
+			case *events.HistorySync:
+				// Process history sync events
+				handleHistorySync(box.Get(), messageStore, v, logger)
 
-		case *events.Connected:
-			logger.Infof("Connected to WhatsApp")
+			case *events.Connected:
+				logger.Infof("Connected to WhatsApp")
 
-		case *events.LoggedOut:
-			logger.Warnf("Device logged out, please scan QR code to log in again")
-			loginMu.Lock()
-			waConnected = false
-			loginMu.Unlock()
-		}
-	})
+			case *events.LoggedOut:
+				logger.Warnf("Device logged out, please scan QR code to log in again")
+				loginMu.Lock()
+				waConnected = false
+				deviceInvalid = true
+				loginMu.Unlock()
+			}
+		})
+	}
+	registerHandlers(client)
 
 	// Start REST API server first so /api/login and /api/qr work even before login
-	startRESTServer(client, messageStore, 8080, logger)
+	startRESTServer(box, container, registerHandlers, messageStore, 8080, logger)
 
 	// Connect to WhatsApp
 	if client.Store.ID == nil {
@@ -1197,7 +1273,7 @@ func main() {
 
 	fmt.Println("Disconnecting...")
 	// Disconnect client
-	client.Disconnect()
+	box.Get().Disconnect()
 }
 
 // GetChatName determines the appropriate name for a chat based on JID and other info
