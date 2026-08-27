@@ -294,6 +294,12 @@
             </div>
             <div class="stats" id="stats"></div>
         </header>
+        <div id="wa-banner" style="display:none;margin:16px 0;padding:14px;border:1px solid #eee;border-radius:8px;">
+            <div>WhatsApp disconnected.</div>
+            <button onclick="startLogin()" style="margin-top:8px;padding:6px 14px;cursor:pointer;">Login with
+                WhatsApp</button>
+            <div id="wa-qr"></div>
+        </div>
         <a class="approved-link" href="/approved.html">View approved →</a>
         <div id="groups"></div>
     </div>
@@ -358,6 +364,23 @@
                 container.appendChild(group);
             });
         }
+
+        async function checkWaStatus() {
+            const d = await (await fetch('/api/wa-status')).json();
+            document.getElementById('wa-banner').style.display = d.connected ? 'none' : 'block';
+        }
+        async function startLogin() {
+            await fetch('/api/wa-login', { method: 'POST' });
+            const box = document.getElementById('wa-qr');
+            const iv = setInterval(async () => {
+                const s = await (await fetch('/api/wa-status')).json();
+                if (s.connected) { clearInterval(iv); box.innerHTML = ''; checkWaStatus(); return; }
+                const q = await (await fetch('/api/wa-qr')).json();
+                if (q.qr) box.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(q.qr)}">`;
+            }, 3000);
+        }
+        checkWaStatus();
+        setInterval(checkWaStatus, 8000);
 
         async function act(id, action) {
             await fetch(`/api/${action}/${id}`, { method: 'POST' });

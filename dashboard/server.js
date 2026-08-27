@@ -64,6 +64,19 @@ app.post('/api/reject/:id', (c) => {
     return c.json({ ok: true });
 });
 
+app.get('/api/wa-status', async (c) => {
+    try { return c.json(await (await fetch('http://localhost:8080/api/status')).json()); }
+    catch { return c.json({ connected: false }); }
+});
+app.get('/api/wa-qr', async (c) => {
+    try { return c.json(await (await fetch('http://localhost:8080/api/qr')).json()); }
+    catch { return c.json({ qr: '' }); }
+});
+app.post('/api/wa-login', async (c) => {
+    try { await fetch('http://localhost:8080/api/login', { method: 'POST' }); } catch { }
+    return c.json({ ok: true });
+});
+
 app.use('/*', serveStatic({ root: './public' }));
 
 serve({ fetch: app.fetch, port: 4000 }, (info) => {
