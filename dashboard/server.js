@@ -4,7 +4,8 @@ import { Hono } from 'hono';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'fs';
 
-const MESSAGES_DB_PATH = '../whatsapp-bridge/store/messages.db';
+const MESSAGES_DB_PATH = process.env.MESSAGES_DB_PATH || '/app/store/messages.db';
+const BRIDGE_URL = process.env.BRIDGE_URL || 'http://localhost:8080';
 const STATUS_FILE = './status.json';
 
 // Open messages.db READ-ONLY — never write to the bridge's own database
@@ -70,15 +71,15 @@ app.post('/api/reject', (c) => {
 });
 
 app.get('/api/status', async (c) => {
-    try { return c.json(await (await fetch('http://localhost:8080/api/status')).json()); }
+    try { return c.json(await (await fetch(`${BRIDGE_URL}/api/status`)).json()); }
     catch { return c.json({ connected: false }); }
 });
 app.get('/api/qr', async (c) => {
-    try { return c.json(await (await fetch('http://localhost:8080/api/qr')).json()); }
+    try { return c.json(await (await fetch(`${BRIDGE_URL}/api/qr`)).json()); }
     catch { return c.json({ qr: '' }); }
 });
 app.post('/api/login', async (c) => {
-    try { await fetch('http://localhost:8080/api/login', { method: 'POST' }); } catch { }
+    try { await fetch(`${BRIDGE_URL}/api/login`, { method: 'POST' }); } catch { }
     return c.json({ ok: true });
 });
 
