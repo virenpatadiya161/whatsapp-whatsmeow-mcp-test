@@ -190,7 +190,9 @@
                     <td class="name" data-cell="name">${escapeHtml(r.name)}</td>
                     <td><button data-role="change">Change name</button></td>
                 `;
-                tr.querySelector('[data-role="change"]').addEventListener('click', () => startRename(tr, r));
+                // .onclick (not addEventListener) so startRename's later reassignment
+                // fully replaces this handler instead of both firing on the same click
+                tr.querySelector('[data-role="change"]').onclick = () => startRename(tr, r);
                 tbody.appendChild(tr);
             });
         }
