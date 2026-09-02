@@ -175,8 +175,8 @@
 
         async function load() {
             const res = await fetch('/api/rules');
-            const rows = await res.json();
-            render(rows);
+            const { data } = await res.json();
+            render(data.results);
         }
 
         function render(rows) {
@@ -206,7 +206,7 @@
                 tr.innerHTML = `
                     <td class="phone">${escapeHtml(r.phone_number)}</td>
                     <td class="name" data-cell="name">${escapeHtml(r.name)}</td>
-                    <td><button data-role="change">Change name</button></td>
+                    <td><button data-role="change">Edit name</button></td>
                 `;
                 // .onclick (not addEventListener) so startRename's later reassignment
                 // fully replaces this handler instead of both firing on the same click
