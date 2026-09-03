@@ -1,4 +1,3 @@
-// server.js
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
@@ -109,8 +108,46 @@ app.get('/api/approved', (c) => {
 app.post('/api/approve', (c) => {
     const id = c.req.query('id');
     if (!id) return c.json({ ok: false, error: 'id query param is required' }, 400);
+
+    // Find the media message
+    const message = db.prepare(`
+        SELECT id, phone_number
+        FROM messages
+        WHERE id = ?
+        LIMIT 1
+    `).get(id);
+
+    if (!message) {
+        return c.json({
+            ok: false,
+            error: 'Media message not found'
+        }, 404);
+    }
+
+    const phoneNumber = message.phone_number;
+
+    const rules = loadRules(); // Check whether this number already has a rule
+    const rule = phoneNumber ? findRule(rules, phoneNumber) : null;
+
+    // No rule for this number -> tell frontend to open name picker
+    if (!rule) {
+        return c.json({
+            ok: false,
+            needsName: true,
+            id,
+            phone_number: phoneNumber
+        });
+    }
+
+    // Rule exists -> approve ONLY this media
     saveStatus(markStatus(id, 'approved'));
-    return c.json({ ok: true });
+
+    return c.json({
+        ok: true,
+        id,
+        phone_number: phoneNumber,
+        name: rule.name
+    });
 });
 
 app.post('/api/reject', (c) => {
