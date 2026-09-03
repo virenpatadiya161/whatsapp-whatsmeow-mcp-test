@@ -19,6 +19,7 @@ services:
       - BRIDGE_URL=http://whatsapp-bridge:8080
       - STATUS_FILE=/app/data/status.json
       - RULES_FILE=/app/data/rules.json
+      - MESSAGES_DB_PATH=/app/store/messages.db
     depends_on:
       - whatsapp-bridge
     restart: unless-stopped
