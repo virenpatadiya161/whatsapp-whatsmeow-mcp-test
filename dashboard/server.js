@@ -5,7 +5,8 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'fs';
 import path from 'path';
 
-const MESSAGES_DB_PATH = process.env.MESSAGES_DB_PATH || '/app/store/messages.db';
+const MESSAGES_DB_PATH = process.env.MESSAGES_DB_PATH || '/app/store/messages.db'; // This path for client PC docker
+// const MESSAGES_DB_PATH = process.env.MESSAGES_DB_PATH || '/root/workspace/whatsameow/whatsapp-bridge/store/messages.db'; // root path for office live server
 const BRIDGE_URL = process.env.BRIDGE_URL || 'http://localhost:8080';
 const STATUS_FILE = process.env.STATUS_FILE || './status.json';
 const RULES_FILE = process.env.RULES_FILE || './rules.json';
