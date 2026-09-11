@@ -4,6 +4,7 @@ import { Hono } from 'hono';
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 
 const MESSAGES_DB_PATH = process.env.MESSAGES_DB_PATH || '/app/store/messages.db'; // This path for client PC docker
 // const MESSAGES_DB_PATH = process.env.MESSAGES_DB_PATH || '/root/workspace/whatsameow/whatsapp-bridge/store/messages.db'; // root path for office live server
@@ -13,6 +14,7 @@ const RULES_FILE = process.env.RULES_FILE || './rules.json';
 const UNLINKED_KEY = '__unlinked__';
 const STORE_DIR = path.dirname(MESSAGES_DB_PATH); // e.g. /app/store — same folder the bridge downloads media into
 const EXPORT_ROOT = process.env.EXPORT_ROOT || './export';
+const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || path.join(os.homedir(), 'Downloads', 'downloaded-images');
 
 // Open messages.db READ-ONLY — never write to the bridge's own database
 const db = new DatabaseSync(MESSAGES_DB_PATH, { readOnly: true });
@@ -288,6 +290,159 @@ app.get('/api/qr', async (c) => {
 app.post('/api/login', async (c) => {
     try { await fetch(`${BRIDGE_URL}/api/login`, { method: 'POST' }); } catch { }
     return c.json({ ok: true });
+});
+
+// direct get data API
+app.get('/api/messages', (c) => {
+    const limitParam = c.req.query('limit');
+    const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
+    const id = c.req.query('id');
+    const phone_number = c.req.query('phone_number');
+    const chat_jid = c.req.query('chat_jid');
+    const sender = c.req.query('sender');
+    const search = c.req.query('query');
+    const media_type = c.req.query('media_type'); // supports comma-separated list, e.g. "image,document"
+    const is_from_me = c.req.query('is_from_me');
+    const after = c.req.query('after');
+    const before = c.req.query('before');
+    const filename = c.req.query('filename');
+
+    const where = [];
+    const params = [];
+
+    if (id) { where.push('id = ?'); params.push(id); }
+    if (phone_number) { where.push('phone_number = ?'); params.push(phone_number); }
+    if (chat_jid) { where.push('chat_jid = ?'); params.push(chat_jid); }
+    if (sender) { where.push('sender = ?'); params.push(sender); }
+    if (search) { where.push('LOWER(content) LIKE LOWER(?)'); params.push(`%${search}%`); }
+    if (media_type) {
+        const types = media_type.split(',').map(t => t.trim()).filter(Boolean);
+        if (types.length) {
+            where.push(`media_type IN (${types.map(() => '?').join(',')})`);
+            params.push(...types);
+        }
+    }
+    if (is_from_me !== undefined) { where.push('is_from_me = ?'); params.push(Number(is_from_me)); }
+    if (after) { where.push('timestamp > ?'); params.push(after); }
+    if (before) { where.push('timestamp < ?'); params.push(before); }
+    if (filename) { where.push('filename = ?'); params.push(filename); }
+
+    const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const limitClause = limit ? 'LIMIT ?' : '';
+    const queryParams = limit ? [...params, limit] : params;
+
+    const rows = db.prepare(`
+        SELECT id, chat_jid, sender, phone_number, content, timestamp, is_from_me, media_type, filename
+        FROM messages
+        ${whereClause}
+        ORDER BY timestamp DESC
+        ${limitClause}
+    `).all(...queryParams);
+
+    return c.json({
+        success: true,
+        data: {
+            results: rows,
+            count: rows.length,
+            message: rows.length === 0 ? 'No matching messages found' : undefined
+        }
+    });
+});
+
+async function downloadAndSaveToDownloads(message) {
+    if (!message.media_type || !message.filename) {
+        return { success: false, error: 'Message has no media' };
+    }
+
+    const folderName = message.phone_number || message.chat_jid.replace(/:/g, '_');
+    const sourcePath = path.join(STORE_DIR, folderName, message.filename);
+
+    if (!fs.existsSync(sourcePath)) {
+        let bridgeResult;
+        try {
+            const resp = await fetch(`${BRIDGE_URL}/api/download`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message_id: message.id, chat_jid: message.chat_jid })
+            });
+            bridgeResult = await resp.json();
+        } catch (err) {
+            return { success: false, error: `Bridge unreachable: ${err.message}` };
+        }
+        if (!bridgeResult.success) {
+            return { success: false, error: bridgeResult.message || 'Download failed' };
+        }
+        if (!fs.existsSync(sourcePath)) {
+            return { success: false, error: 'Downloaded but not found on shared volume', path: sourcePath };
+        }
+    }
+
+    try {
+        const destDir = path.join(DOWNLOADS_DIR, folderName);
+        fs.mkdirSync(destDir, { recursive: true });
+        const destPath = path.join(destDir, message.filename);
+        fs.copyFileSync(sourcePath, destPath);
+        return { success: true, filename: message.filename, path: destPath };
+    } catch (err) {
+        return { success: false, error: `Failed to save to Downloads: ${err.message}` };
+    }
+}
+
+app.get('/api/media/download', async (c) => {
+    const filename = c.req.query('filename');
+    const phone_number = c.req.query('phone_number');
+    const limitParam = c.req.query('limit');
+
+    if (filename) {
+        const message = db.prepare(`
+            SELECT id, chat_jid, phone_number, filename, media_type
+            FROM messages WHERE filename = ? LIMIT 1
+        `).get(filename);
+
+        if (!message) return c.json({ success: false, message: 'No media found with that filename' }, 404);
+
+        const result = await downloadAndSaveToDownloads(message);
+        if (!result.success) return c.json(result, 502);
+
+        return c.json({
+            success: true,
+            message: `Downloaded ${result.filename} to Downloads`,
+            path: result.path
+        });
+    }
+
+    if (phone_number) {
+        const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
+        const limitClause = limit ? 'LIMIT ?' : '';
+        const params = limit ? [phone_number, limit] : [phone_number];
+
+        const messages = db.prepare(`
+            SELECT id, chat_jid, phone_number, filename, media_type
+            FROM messages
+            WHERE phone_number = ? AND media_type IN ('image', 'document') AND filename != ''
+            ORDER BY timestamp DESC
+            ${limitClause}
+        `).all(...params);
+
+        if (!messages.length) {
+            return c.json({ success: false, error: 'No media found for that phone number' }, 404);
+        }
+
+        const results = [];
+        for (const message of messages) {
+            results.push(await downloadAndSaveToDownloads(message));
+        }
+
+        const successCount = results.filter(r => r.success).length;
+
+        return c.json({
+            success: successCount > 0,
+            message: `Downloaded ${successCount} of ${results.length} file(s) to Downloads`,
+            data: { results, count: results.length }
+        });
+    }
+
+    return c.json({ success: false, error: 'filename or phone_number is required' }, 400);
 });
 
 app.use('/*', serveStatic({ root: './public' }));
