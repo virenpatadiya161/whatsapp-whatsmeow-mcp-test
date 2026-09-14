@@ -382,7 +382,7 @@ async function downloadAndSaveToDownloads(message) {
         fs.mkdirSync(destDir, { recursive: true });
         const destPath = path.join(destDir, message.filename);
         fs.copyFileSync(sourcePath, destPath);
-        return { success: true, filename: message.filename, path: destPath };
+        return { success: true, filename: message.filename, path: destPath.replace(/\\/g, '/') };
     } catch (err) {
         return { success: false, error: `Failed to save to Downloads: ${err.message}` };
     }
@@ -406,8 +406,8 @@ app.get('/api/media/download', async (c) => {
 
         return c.json({
             success: true,
-            message: `Downloaded ${result.filename} to Downloads`,
-            path: result.path
+            message: `${result.filename} downloaded successfully`,
+            path: result.path.replace(/\\/g, '/')
         });
     }
 
@@ -437,7 +437,7 @@ app.get('/api/media/download', async (c) => {
 
         return c.json({
             success: successCount > 0,
-            message: `Downloaded ${successCount} of ${results.length} file(s) to Downloads`,
+            message: `${successCount} of ${results.length} file(s) downloaded successfully`,
             data: { results, count: results.length }
         });
     }
