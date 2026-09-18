@@ -83,6 +83,12 @@ function formatTimestamp(date = new Date()) {
         `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())} +0000 UTC`;
 }
 
+function formatLocalDateTime(date = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+        `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
 // Copies an already-downloaded media file into <EXPORT_ROOT>/<rule_name>/<phone_number>/<filename>.
 // Silently skips if the source file hasn't been downloaded by the bridge yet.
 function exportApprovedMedia(phoneNumber, filename, ruleName) {
@@ -388,10 +394,20 @@ async function downloadAndSaveToDownloads(message) {
     }
 }
 
+// Download modes:
+//   ?filename=X.jpg                              -> download that one file
+//   ?phone_number=X&date_after=YYYY-MM-DD        -> media for that number from date_after to now
+//   Add &limit=N to limit phone-number downloads to the last N matching files.
 app.get('/api/media/download', async (c) => {
     const filename = c.req.query('filename');
     const phone_number = c.req.query('phone_number');
     const limitParam = c.req.query('limit');
+    const date_after = c.req.query('date_after');
+
+    // date_after is require when phone_number comes in query param
+    if (phone_number !== undefined && !date_after?.trim()) {
+        return c.json({ success: false, error: 'date_after is required when phone_number is provided' }, 400);
+    }
 
     if (filename) {
         const message = db.prepare(`
@@ -414,15 +430,29 @@ app.get('/api/media/download', async (c) => {
     if (phone_number) {
         const limit = limitParam ? Math.min(parseInt(limitParam, 10), 500) : null;
         const limitClause = limit ? 'LIMIT ?' : '';
-        const params = limit ? [phone_number, limit] : [phone_number];
+        const where = [
+            'phone_number = ?',
+            "media_type IN ('image', 'document')",
+            "filename != ''"
+        ];
+        const params = [phone_number];
+
+        if (date_after) {
+            where.push('substr(timestamp, 1, 19) >= ?');
+            params.push(date_after);
+            where.push('substr(timestamp, 1, 19) <= ?');
+            params.push(formatLocalDateTime());
+        }
+
+        const queryParams = limit ? [...params, limit] : params;
 
         const messages = db.prepare(`
             SELECT id, chat_jid, phone_number, filename, media_type
             FROM messages
-            WHERE phone_number = ? AND media_type IN ('image', 'document') AND filename != ''
+            WHERE ${where.join(' AND ')}
             ORDER BY timestamp DESC
             ${limitClause}
-        `).all(...params);
+        `).all(...queryParams);
 
         if (!messages.length) {
             return c.json({ success: false, error: 'No media found for that phone number' }, 404);
