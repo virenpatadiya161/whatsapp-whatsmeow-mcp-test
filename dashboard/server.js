@@ -15,6 +15,8 @@ const UNLINKED_KEY = '__unlinked__';
 const STORE_DIR = path.dirname(MESSAGES_DB_PATH); // e.g. /app/store — same folder the bridge downloads media into
 const EXPORT_ROOT = process.env.EXPORT_ROOT || './export';
 const DOWNLOADS_DIR = process.env.DOWNLOADS_DIR || path.join(os.homedir(), 'Downloads', 'downloaded-images');
+// Host-visible path for API responses only; file operations use DOWNLOADS_DIR.
+const DOWNLOADS_HOST_DIR = process.env.DOWNLOADS_HOST_DIR || '';
 
 // Open messages.db READ-ONLY — never write to the bridge's own database
 const db = new DatabaseSync(MESSAGES_DB_PATH, { readOnly: true });
@@ -390,7 +392,10 @@ async function downloadAndSaveToDownloads(message) {
         fs.mkdirSync(destDir, { recursive: true });
         const destPath = path.join(destDir, message.filename);
         fs.copyFileSync(sourcePath, destPath);
-        return { success: true, filename: message.filename, path: destPath.replace(/\\/g, '/') };
+        const responsePath = DOWNLOADS_HOST_DIR
+            ? path.posix.join(DOWNLOADS_HOST_DIR.replace(/\\/g, '/'), folderName, message.filename)
+            : destPath.replace(/\\/g, '/');
+        return { success: true, filename: message.filename, path: responsePath };
     } catch (err) {
         return { success: false, error: `Failed to save to Downloads: ${err.message}` };
     }
