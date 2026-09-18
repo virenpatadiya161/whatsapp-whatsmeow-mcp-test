@@ -720,7 +720,7 @@ func extractMediaInfo(msg *waProto.Message) (mediaType string, filename string, 
 func handleMessage(client *whatsmeow.Client, messageStore *MessageStore, msg *events.Message, logger waLog.Logger) {
 	// Save message to database
 	chatJID := msg.Info.Chat.String()
-	sender := msg.Info.Sender.User
+	sender := msg.Info.Sender.ToNonAD().String()
 	senderNumber := resolveSenderPhoneNumber(client, msg, logger)
 
 	// Get appropriate chat name (pass nil for conversation since we don't have one for regular messages)
@@ -1473,21 +1473,22 @@ func handleHistorySync(client *whatsmeow.Client, messageStore *MessageStore, his
 				}
 
 				// Determine sender
-				var sender string
-				isFromMe := false
-				if msg.Message.Key != nil {
-					if msg.Message.Key.FromMe != nil {
-						isFromMe = *msg.Message.Key.FromMe
-					}
-					if !isFromMe && msg.Message.Key.Participant != nil && *msg.Message.Key.Participant != "" {
-						sender = *msg.Message.Key.Participant
-					} else if isFromMe {
-						sender = client.Store.ID.User
-					} else {
-						sender = jid.User
+				key := msg.Message.GetKey()
+				isFromMe := key.GetFromMe()
+				sender := jid.ToNonAD().String()
+				if isFromMe {
+					if client.Store.ID != nil {
+						sender = client.Store.ID.ToNonAD().String()
 					}
 				} else {
-					sender = jid.User
+					participant := key.GetParticipant()
+					if participant == "" {
+						// Synced group messages may carry the sender outside the key.
+						participant = msg.Message.GetParticipant()
+					}
+					if participant != "" {
+						sender = participant
+					}
 				}
 
 				senderNumber := sender
