@@ -338,8 +338,10 @@ app.get('/api/messages', (c) => {
     const queryParams = limit ? [...params, limit] : params;
 
     const rows = db.prepare(`
-        SELECT id, chat_jid, sender, phone_number, content, timestamp, is_from_me, media_type, filename
-        FROM messages
+        SELECT m.id, m.chat_jid, m.sender, m.phone_number, m.content, m.timestamp,
+               m.is_from_me, m.media_type, m.filename, COALESCE(c.name, '') AS user_name
+        FROM messages m
+        LEFT JOIN chats c ON c.jid = m.chat_jid
         ${whereClause}
         ORDER BY timestamp DESC
         ${limitClause}
@@ -411,18 +413,23 @@ app.get('/api/media/download', async (c) => {
 
     if (filename) {
         const message = db.prepare(`
-            SELECT id, chat_jid, phone_number, filename, media_type
-            FROM messages WHERE filename = ? LIMIT 1
+            SELECT m.id, m.chat_jid, m.phone_number, m.filename, m.media_type,
+                   COALESCE(c.name, '') AS user_name
+            FROM messages m
+            LEFT JOIN chats c ON c.jid = m.chat_jid
+            WHERE m.filename = ? LIMIT 1
         `).get(filename);
 
         if (!message) return c.json({ success: false, message: 'No media found with that filename' }, 404);
 
         const result = await downloadAndSaveToDownloads(message);
+        result.user_name = message.user_name;
         if (!result.success) return c.json(result, 502);
 
         return c.json({
             success: true,
             message: `${result.filename} downloaded successfully`,
+            user_name: message.user_name,
             path: result.path.replace(/\\/g, '/')
         });
     }
@@ -447,8 +454,10 @@ app.get('/api/media/download', async (c) => {
         const queryParams = limit ? [...params, limit] : params;
 
         const messages = db.prepare(`
-            SELECT id, chat_jid, phone_number, filename, media_type
-            FROM messages
+            SELECT m.id, m.chat_jid, m.phone_number, m.filename, m.media_type,
+                   COALESCE(c.name, '') AS user_name
+            FROM messages m
+            LEFT JOIN chats c ON c.jid = m.chat_jid
             WHERE ${where.join(' AND ')}
             ORDER BY timestamp DESC
             ${limitClause}
@@ -460,7 +469,8 @@ app.get('/api/media/download', async (c) => {
 
         const results = [];
         for (const message of messages) {
-            results.push(await downloadAndSaveToDownloads(message));
+            const result = await downloadAndSaveToDownloads(message);
+            results.push({ ...result, user_name: message.user_name });
         }
 
         const successCount = results.filter(r => r.success).length;
