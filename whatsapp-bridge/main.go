@@ -173,6 +173,18 @@ func NewMessageStore() (*MessageStore, error) {
 		return nil, fmt.Errorf("failed to migrate messages table (phone_number): %v", err)
 	}
 
+	// Backfill old direct-chat rows where phone_number was not stored yet.
+	_, err = db.Exec(`
+		UPDATE messages
+		SET phone_number = substr(chat_jid, 1, instr(chat_jid, '@') - 1)
+		WHERE (phone_number IS NULL OR phone_number = '')
+		  AND chat_jid LIKE '%@s.whatsapp.net'
+	`)
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("failed to backfill messages table (phone_number): %v", err)
+	}
+
 	return &MessageStore{db: db}, nil
 }
 
@@ -197,6 +209,7 @@ func (store *MessageStore) StoreMessage(id, chatJID, sender, content string, tim
 	if content == "" && mediaType == "" {
 		return nil
 	}
+	phoneNumber = messagePhoneNumber(chatJID, sender, phoneNumber)
 
 	_, err := store.db.Exec(
 		`INSERT OR REPLACE INTO messages 
@@ -460,6 +473,31 @@ func phoneNumberFromJID(jid types.JID) string {
 	}
 	return jid.User
 }
+
+func phoneNumberFromJIDString(rawJID string) string {
+	jid, err := types.ParseJID(rawJID)
+	if err != nil {
+		return ""
+	}
+	return phoneNumberFromJID(jid)
+}
+
+func messagePhoneNumber(chatJID, sender, resolvedPhoneNumber string) string {
+	if number := phoneNumberFromJIDString(chatJID); number != "" {
+		return number
+	}
+	if number := phoneNumberFromJIDString(resolvedPhoneNumber); number != "" {
+		return number
+	}
+	if resolvedPhoneNumber != "" && !strings.Contains(resolvedPhoneNumber, "@") {
+		return resolvedPhoneNumber
+	}
+	if number := phoneNumberFromJIDString(sender); number != "" {
+		return number
+	}
+	return ""
+}
+
 func resolveSenderPhoneNumber(client *whatsmeow.Client, msg *events.Message, logger waLog.Logger) string {
 	logger.Infof("[resolveSenderPhoneNumber] start: Sender=%s SenderAlt=%s Chat=%s",
 		msg.Info.Sender, msg.Info.SenderAlt, msg.Info.Chat)
