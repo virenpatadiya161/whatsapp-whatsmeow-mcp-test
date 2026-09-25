@@ -87,7 +87,10 @@ try {
             $sourceFile = $_.FullName
             $sourceLength = $_.Length
             $relative = $sourceFile.Substring($source.Length).TrimStart('\')
-            $segments = @($relative -split '\')
+            $segments = @($relative.Split(
+                    [char[]]@([System.IO.Path]::DirectorySeparatorChar),
+                    [System.StringSplitOptions]::RemoveEmptyEntries
+                ))
             $safeSegments = for ($segmentIndex = 0; $segmentIndex -lt $segments.Count; $segmentIndex++) {
                 ConvertTo-GoogleDriveName `
                     -Name $segments[$segmentIndex] `
